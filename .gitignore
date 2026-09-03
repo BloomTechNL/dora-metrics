@@ -1,0 +1,17 @@
+.trunk.json
+.idea/
+node_modules/
+.nx/
+dist/
+tmp/
+.vscode/
+.env
+data/
+coverage/
+.claude/settings.local.json
+last_used_file
+*.DS_Store
+
+.venv/
+.output.txt
+
