@@ -1,0 +1,21 @@
+{
+  "name": "dora-metrics",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "mttr": "node --import tsx/esm trello-mttr.ts",
+    "cfr": "node --import tsx/esm trello-cfr.ts",
+    "deploy-frequency": "node --import tsx/esm deploy-frequency.ts",
+    "lead-time": "node --import tsx/esm lead-time.ts",
+    "collect": "pnpm run mttr && pnpm run cfr && pnpm run deploy-frequency && pnpm run lead-time",
+    "dashboard": "uv run dashboard.py"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.7.3"
+  }
+}
