@@ -12,7 +12,7 @@ gitignored local cache the dashboard reads to recompute deploys-per-period
 over arbitrary windows without re-walking git history.
 
 Usage:
-    uv run deploy_frequency.py
+    uv run src/deploy_frequency.py
 
 Required env var:
     GIT_REPO_PATH — local path to the git checkout to read commit history from

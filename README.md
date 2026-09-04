@@ -16,32 +16,44 @@ or GitHub itself, so picking a different window or granularity is instant.
 uv sync
 ```
 
-## Required environment variables
-
-| Variable | Used by | Description |
-|---|---|---|
-| `TRELLO_API_KEY` | `trello_mttr.py`, `trello_cfr.py` | Trello API key |
-| `TRELLO_TOKEN` | `trello_mttr.py`, `trello_cfr.py` | Trello API token |
-| `TRELLO_BOARD_ID` | `trello_mttr.py`, `trello_cfr.py` | Trello board id to read bug cards from (`trello_mttr.py` also accepts it as a positional arg) |
-| `GIT_REPO_PATH` | `trello_cfr.py`, `deploy_frequency.py`, `lead_time.py` | Local path to the git checkout to analyze. `lead_time.py` also derives the GitHub owner/repo from this checkout's `origin` remote |
-| `GITHUB_TOKEN` | `lead_time.py` | GitHub token with `actions:read` on the target repo |
-
-Put these in your shell profile or a `.env` file (both are gitignored).
-
 ## Usage
 
 ```bash
-uv run trello_mttr.py
-uv run trello_cfr.py
-uv run deploy_frequency.py
-uv run lead_time.py
-
-uv run dashboard.py
+./fetch_data.sh       # populates ./data/*.csv
+./serve_dashboard.sh  # serves the dashboard at http://127.0.0.1:8050
 ```
 
-or `uv run collect.py` to run all four collection scripts in sequence.
+### `fetch_data.sh`
 
-Then open http://127.0.0.1:8050.
+Runs `uv run src/collect.py`, which runs `src/trello_mttr.py`,
+`src/trello_cfr.py`, `src/deploy_frequency.py`, and `src/lead_time.py` in
+sequence, writing their output to `data/*.csv`. Takes no arguments.
+
+Required environment variables (the union of what the four scripts need):
+
+| Variable | Description |
+|---|---|
+| `TRELLO_API_KEY` | Trello API key |
+| `TRELLO_TOKEN` | Trello API token |
+| `TRELLO_BOARD_ID` | Trello board id to read bug cards from |
+| `GIT_REPO_PATH` | Local path to the git checkout to analyze; also used to derive the GitHub owner/repo (via its `origin` remote) for the lead-time fetch |
+| `GITHUB_TOKEN` | GitHub token with `actions:read` on the target repo |
+
+Put these in your shell profile or a `.env` file (both are gitignored).
+
+Each underlying script can also be run individually — e.g. `uv run
+src/trello_mttr.py` — if you only need to refresh one metric; see its header
+comment for the subset of the above variables it actually needs (and, for
+`trello_mttr.py`, its `--help`-documented CLI flags).
+
+### `serve_dashboard.sh`
+
+Runs `uv run src/dashboard.py`, serving the dashboard at
+`http://127.0.0.1:8050`. Takes no arguments and needs no environment
+variables — it only reads the CSVs already in `data/`, so run
+`fetch_data.sh` at least once first. Reads: `data/mttr.csv`,
+`data/cfr-commits.csv`, `data/cfr-bug-cards.csv`,
+`data/deploy-frequency.csv`, `data/lead-time.csv`.
 
 ## Notes
 

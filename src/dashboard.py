@@ -11,15 +11,11 @@ locally, so picking a different time range or granularity is instant instead
 of re-fetching from a rate-limited API.
 
 Run:
-    uv run dashboard.py
+    ./serve_dashboard.sh
 
 Requires data/mttr.csv, data/cfr-commits.csv, data/cfr-bug-cards.csv,
 data/deploy-frequency.csv, and data/lead-time.csv to already exist —
-produced by running (from this directory):
-    uv run trello_mttr.py
-    uv run trello_cfr.py
-    uv run deploy_frequency.py
-    uv run lead_time.py
+produced by running ./fetch_data.sh from the repo root.
 """
 
 from pathlib import Path
@@ -28,7 +24,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, dash_table, dcc, html
 
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 COLORS = {
     "page": "#f9f9f7",
@@ -81,14 +77,7 @@ def bucket_label(ts: pd.Timestamp, freq: str) -> str:
 def _require_csv(name: str) -> Path:
     path = DATA_DIR / name
     if not path.exists():
-        raise FileNotFoundError(
-            f"{path} not found. From {Path(__file__).parent}, run:\n"
-            f"  uv run trello_mttr.py\n"
-            f"  uv run trello_cfr.py\n"
-            f"  uv run deploy_frequency.py\n"
-            f"  uv run lead_time.py\n"
-            f"to populate ./data/ first."
-        )
+        raise FileNotFoundError(f"{path} not found. Run ./fetch_data.sh from the repo root to populate ./data/ first.")
     return path
 
 

@@ -30,7 +30,7 @@ checkout at GIT_REPO_PATH, rather than hardcoded — this script targets
 whatever repo GIT_REPO_PATH points at.
 
 Usage:
-    uv run lead_time.py
+    uv run src/lead_time.py
 
 Required env vars:
     GITHUB_TOKEN

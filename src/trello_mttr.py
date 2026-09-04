@@ -21,7 +21,7 @@ usually a card being dragged straight through both lists at once (e.g. a
 Butler automation, or bulk cleanup) rather than real recovery time.
 
 Usage:
-    uv run trello_mttr.py [boardId] [--label=bug] [--done=Done] [--in-progress="In Progress"] [--min-duration-minutes=15]
+    uv run src/trello_mttr.py [boardId] [--label=bug] [--done=Done] [--in-progress="In Progress"] [--min-duration-minutes=15]
 
 boardId defaults to the TRELLO_BOARD_ID env var if not passed positionally.
 

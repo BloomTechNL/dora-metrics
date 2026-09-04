@@ -6,7 +6,7 @@ import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 
 def require_env(name: str) -> str:

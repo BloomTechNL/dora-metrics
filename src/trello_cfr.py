@@ -29,7 +29,7 @@ ObjectId timestamp). Only non-archived (open) cards are counted, for
 consistency with trello_mttr.py.
 
 Usage:
-    uv run trello_cfr.py
+    uv run src/trello_cfr.py
 
 Always writes the raw (per-commit, per-card) datasets to
 data/cfr-commits.csv and data/cfr-bug-cards.csv — gitignored local caches

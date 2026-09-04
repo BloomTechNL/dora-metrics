@@ -13,4 +13,5 @@ last_used_file
 
 .venv/
 .output.txt
+__pycache__/
 
