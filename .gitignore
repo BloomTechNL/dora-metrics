@@ -1,6 +1,5 @@
 .trunk.json
 .idea/
-node_modules/
 .nx/
 dist/
 tmp/

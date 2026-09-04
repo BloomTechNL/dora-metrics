@@ -1,8 +1,8 @@
 """
 Dash dashboard for four DORA metrics — Mean Time to Recovery, Change Failure
 Rate, Deployment Frequency, and Lead Time for Changes — computed from the
-CSVs that trello-mttr.ts / trello-cfr.ts / deploy-frequency.ts /
-lead-time.ts write to ./data/.
+CSVs that trello_mttr.py / trello_cfr.py / deploy_frequency.py /
+lead_time.py write to ./data/.
 
 This dashboard does not talk to Trello, git, or GitHub itself: it reads the
 raw, per-item data those scripts already cached (card timestamps, commit
@@ -16,10 +16,10 @@ Run:
 Requires data/mttr.csv, data/cfr-commits.csv, data/cfr-bug-cards.csv,
 data/deploy-frequency.csv, and data/lead-time.csv to already exist —
 produced by running (from this directory):
-    node --import tsx/esm trello-mttr.ts
-    node --import tsx/esm trello-cfr.ts
-    node --import tsx/esm deploy-frequency.ts
-    node --import tsx/esm lead-time.ts
+    uv run trello_mttr.py
+    uv run trello_cfr.py
+    uv run deploy_frequency.py
+    uv run lead_time.py
 """
 
 from pathlib import Path
@@ -83,10 +83,10 @@ def _require_csv(name: str) -> Path:
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found. From {Path(__file__).parent}, run:\n"
-            f"  node --import tsx/esm trello-mttr.ts\n"
-            f"  node --import tsx/esm trello-cfr.ts\n"
-            f"  node --import tsx/esm deploy-frequency.ts\n"
-            f"  node --import tsx/esm lead-time.ts\n"
+            f"  uv run trello_mttr.py\n"
+            f"  uv run trello_cfr.py\n"
+            f"  uv run deploy_frequency.py\n"
+            f"  uv run lead_time.py\n"
             f"to populate ./data/ first."
         )
     return path
