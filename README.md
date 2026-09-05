@@ -55,10 +55,16 @@ comment for the subset of the above variables it actually needs (and, for
 
 Runs `uv run src/dashboard.py`, serving the dashboard at
 `http://127.0.0.1:8050`. Takes no arguments and needs no environment
-variables — it only reads the CSVs already in `data/`, so run
-`fetch_data.sh` at least once first. Reads: `data/mttr.csv`,
+variables — it boots fine even if `data/` is empty (charts just show "No
+data" until you run `fetch_data.sh`). Reads `data/mttr.csv`,
 `data/cfr-commits.csv`, `data/cfr-bug-cards.csv`,
-`data/deploy-frequency.csv`, `data/lead-time.csv`.
+`data/deploy-frequency.csv`, `data/lead-time.csv` when they exist.
+
+The gear icon (top right) opens a Settings page (`/settings`) with a form
+for all six variables above — it reads and writes `.env` in the project
+root, so filling it in and clicking Save has the same effect as editing
+`.env` by hand. Still run `fetch_data.sh` afterwards to actually pull data
+with the new settings.
 
 ## Notes
 

@@ -18,13 +18,16 @@ data/deploy-frequency.csv, and data/lead-time.csv to already exist —
 produced by running ./fetch_data.sh from the repo root.
 """
 
+import shlex
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, dash_table, dcc, html
+from dash import Dash, Input, Output, State, dash_table, dcc, html
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+ROOT_DIR = Path(__file__).parent.parent
+DATA_DIR = ROOT_DIR / "data"
+ENV_PATH = ROOT_DIR / ".env"
 
 COLORS = {
     "page": "#f9f9f7",
@@ -77,6 +80,64 @@ METRIC_INFO = {
     ),
 }
 
+# Same six variables fetch_data.sh requires — see README.md / .env.example.
+ENV_FIELDS = [
+    {
+        "key": "TRELLO_API_KEY",
+        "label": "Trello API key",
+        "hint": "Get one at https://trello.com/app-key",
+    },
+    {
+        "key": "TRELLO_TOKEN",
+        "label": "Trello API token",
+        "hint": 'Click the "Token" link on https://trello.com/app-key and authorize',
+    },
+    {
+        "key": "TRELLO_BOARD_ID",
+        "label": "Trello board id",
+        "hint": "The segment after /b/ in the board's URL, e.g. trello.com/b/WEJ9CX5t/... → WEJ9CX5t",
+    },
+    {
+        "key": "GIT_REPO_PATH",
+        "label": "Git repo path",
+        "hint": 'Local path to the git checkout to analyze (must have a "main" branch and a GitHub "origin" remote)',
+    },
+    {
+        "key": "GITHUB_TOKEN",
+        "label": "GitHub token",
+        "hint": 'Personal access token with "actions:read" — https://github.com/settings/tokens',
+    },
+    {
+        "key": "WORKFLOW_FILE",
+        "label": "Workflow file",
+        "hint": "Filename under .github/workflows/ to measure pipeline duration for, e.g. meedoen.yml",
+    },
+]
+
+
+def read_env_file() -> dict:
+    if not ENV_PATH.exists():
+        return {}
+    values = {}
+    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, raw_value = line.partition("=")
+        try:
+            parts = shlex.split(raw_value)
+            value = parts[0] if parts else ""
+        except ValueError:
+            value = raw_value.strip()
+        values[key.strip()] = value
+    return values
+
+
+def write_env_file(values: dict) -> None:
+    lines = ["# Managed by the dashboard's Settings page — edit here or through the UI."]
+    lines += [f"{field['key']}={shlex.quote(values.get(field['key']) or '')}" for field in ENV_FIELDS]
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
 
 def bucket_label(ts: pd.Timestamp, freq: str) -> str:
     if freq == "QS":
@@ -90,31 +151,43 @@ def bucket_label(ts: pd.Timestamp, freq: str) -> str:
     return ts.strftime("%Y-%m-%d")
 
 
-def _require_csv(name: str) -> Path:
+CSV_SCHEMAS = {
+    "mttr.csv": {
+        "card_name": "object",
+        "card_url": "object",
+        "in_progress_at": "datetime64[ns]",
+        "done_at": "datetime64[ns]",
+        "duration_hours": "float64",
+    },
+    "cfr-commits.csv": {"hash": "object", "date": "datetime64[ns]", "subject": "object", "is_revert": "bool"},
+    "cfr-bug-cards.csv": {"card_name": "object", "card_url": "object", "created_at": "datetime64[ns]"},
+    "deploy-frequency.csv": {"hash": "object", "date": "datetime64[ns]"},
+    "lead-time.csv": {
+        "run_id": "int64",
+        "created_at": "datetime64[ns]",
+        "completed_at": "datetime64[ns]",
+        "duration_minutes": "float64",
+    },
+}
+
+
+def _read_csv_or_empty(name: str, date_cols: list[str]) -> pd.DataFrame:
     path = DATA_DIR / name
     if not path.exists():
-        raise FileNotFoundError(f"{path} not found. Run ./fetch_data.sh from the repo root to populate ./data/ first.")
-    return path
+        schema = CSV_SCHEMAS[name]
+        return pd.DataFrame({col: pd.Series(dtype=dtype) for col, dtype in schema.items()})
+    df = pd.read_csv(path, parse_dates=date_cols)
+    for col in date_cols:
+        df[col] = df[col].dt.tz_localize(None)
+    return df
 
 
 def load_data():
-    mttr = pd.read_csv(_require_csv("mttr.csv"), parse_dates=["in_progress_at", "done_at"])
-    for col in ("in_progress_at", "done_at"):
-        mttr[col] = mttr[col].dt.tz_localize(None)
-
-    commits = pd.read_csv(_require_csv("cfr-commits.csv"), parse_dates=["date"])
-    commits["date"] = commits["date"].dt.tz_localize(None)
-
-    bug_cards = pd.read_csv(_require_csv("cfr-bug-cards.csv"), parse_dates=["created_at"])
-    bug_cards["created_at"] = bug_cards["created_at"].dt.tz_localize(None)
-
-    deploys = pd.read_csv(_require_csv("deploy-frequency.csv"), parse_dates=["date"])
-    deploys["date"] = deploys["date"].dt.tz_localize(None)
-
-    lead_times = pd.read_csv(_require_csv("lead-time.csv"), parse_dates=["created_at", "completed_at"])
-    for col in ("created_at", "completed_at"):
-        lead_times[col] = lead_times[col].dt.tz_localize(None)
-
+    mttr = _read_csv_or_empty("mttr.csv", ["in_progress_at", "done_at"])
+    commits = _read_csv_or_empty("cfr-commits.csv", ["date"])
+    bug_cards = _read_csv_or_empty("cfr-bug-cards.csv", ["created_at"])
+    deploys = _read_csv_or_empty("deploy-frequency.csv", ["date"])
+    lead_times = _read_csv_or_empty("lead-time.csv", ["created_at", "completed_at"])
     return mttr, commits, bug_cards, deploys, lead_times
 
 
@@ -375,6 +448,33 @@ INDEX_STRING = f"""<!DOCTYPE html>
             }}
             .table-toggle summary {{ cursor: pointer; font-size: 13px; color: {COLORS["secondary_ink"]}; }}
             .table-heading {{ font-size: 13px; color: {COLORS["primary_ink"]}; margin: 16px 0 8px; }}
+            .header {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }}
+            .settings-link {{
+                font-size: 22px; line-height: 1; text-decoration: none; color: {COLORS["muted"]}; padding: 4px;
+            }}
+            .settings-link:hover {{ color: {COLORS["primary_ink"]}; }}
+            .back-link {{ font-size: 13px; color: {COLORS["secondary_ink"]}; text-decoration: none; }}
+            .back-link:hover {{ color: {COLORS["primary_ink"]}; }}
+            .settings-title {{ margin: 12px 0 4px; font-size: 24px; color: {COLORS["primary_ink"]}; }}
+            .settings-form {{
+                display: flex; flex-direction: column; gap: 18px; max-width: 480px; margin-top: 12px;
+            }}
+            .settings-field label {{
+                display: block; font-size: 12px; font-weight: 600; color: {COLORS["muted"]};
+                text-transform: uppercase; letter-spacing: 0.02em; margin-bottom: 4px;
+            }}
+            .settings-input {{
+                width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 14px;
+                border: 1px solid {COLORS["border"]}; border-radius: 6px;
+                background: {COLORS["surface"]}; color: {COLORS["primary_ink"]};
+            }}
+            .settings-hint {{ font-size: 12px; color: {COLORS["muted"]}; margin-top: 4px; }}
+            .settings-save-btn {{
+                margin-top: 8px; align-self: flex-start; padding: 8px 20px; font-size: 14px; font-weight: 600;
+                color: {COLORS["page"]}; background: {COLORS["primary_ink"]}; border: none; border-radius: 6px;
+                cursor: pointer;
+            }}
+            .settings-status {{ margin-top: 12px; font-size: 13px; color: {COLORS["secondary_ink"]}; }}
         </style>
     </head>
     <body>
@@ -387,63 +487,138 @@ INDEX_STRING = f"""<!DOCTYPE html>
     </body>
 </html>"""
 
-app = Dash(__name__)
+app = Dash(__name__, suppress_callback_exceptions=True)
 app.title = "DORA Metrics"
 app.index_string = INDEX_STRING
 
-app.layout = html.Div(
-    [
+
+def dashboard_layout() -> html.Div:
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.H1("DORA Metrics"),
+                            html.P(
+                                "Median time to recovery, change failure rate, deployment frequency, and "
+                                "lead time for changes, from the Trello board, git history, and GitHub Actions.",
+                                className="subtitle",
+                            ),
+                        ]
+                    ),
+                    dcc.Link("⚙", href="/settings", className="settings-link", title="Settings"),
+                ],
+                className="header",
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Label("Window"),
+                            dcc.Dropdown(id="range-select", options=RANGE_OPTIONS, value="all", clearable=False),
+                        ],
+                        className="control",
+                    ),
+                ],
+                className="controls",
+            ),
+            html.Div(
+                [
+                    stat_tile("mttr-stat", "Median time to recovery"),
+                    stat_tile("cfr-stat", "Change failure rate"),
+                    stat_tile("deploy-stat", "Deployment frequency"),
+                    stat_tile("lead-time-stat", "Median lead time"),
+                ],
+                className="stats",
+            ),
+            html.Div(
+                [
+                    html.Div("Stability", className="grid-section-label"),
+                    chart_card(
+                        "mttr-graph", "mttr-granularity-select", "Median time to recovery", METRIC_INFO["mttr"]
+                    ),
+                    chart_card("cfr-graph", "cfr-granularity-select", "Change failure rate", METRIC_INFO["cfr"]),
+                    html.Div("Throughput", className="grid-section-label"),
+                    chart_card(
+                        "deploy-graph", "deploy-granularity-select", "Deployment frequency", METRIC_INFO["deploy"]
+                    ),
+                    chart_card(
+                        "lead-time-graph",
+                        "lead-time-granularity-select",
+                        "Median lead time",
+                        METRIC_INFO["lead_time"],
+                        options=LEAD_TIME_GRANULARITY_OPTIONS,
+                        default="W",
+                    ),
+                ],
+                className="chart-grid",
+            ),
+            html.Details([html.Summary("View data as table"), html.Div(id="data-table")], className="table-toggle"),
+        ],
+        className="app-root",
+    )
+
+
+def settings_layout() -> html.Div:
+    saved = read_env_file()
+    fields = [
         html.Div(
             [
-                html.H1("DORA Metrics"),
-                html.P(
-                    "Median time to recovery, change failure rate, deployment frequency, and "
-                    "lead time for changes, from the Trello board, git history, and GitHub Actions.",
-                    className="subtitle",
+                html.Label(field["label"], htmlFor=f"env-{field['key']}"),
+                dcc.Input(
+                    id=f"env-{field['key']}",
+                    type="text",
+                    value=saved.get(field["key"], ""),
+                    autoComplete="off",
+                    className="settings-input",
                 ),
+                html.Div(field["hint"], className="settings-hint"),
             ],
-            className="header",
-        ),
-        html.Div(
-            [
-                html.Div(
-                    [html.Label("Window"), dcc.Dropdown(id="range-select", options=RANGE_OPTIONS, value="all", clearable=False)],
-                    className="control",
-                ),
-            ],
-            className="controls",
-        ),
-        html.Div(
-            [
-                stat_tile("mttr-stat", "Median time to recovery"),
-                stat_tile("cfr-stat", "Change failure rate"),
-                stat_tile("deploy-stat", "Deployment frequency"),
-                stat_tile("lead-time-stat", "Median lead time"),
-            ],
-            className="stats",
-        ),
-        html.Div(
-            [
-                html.Div("Stability", className="grid-section-label"),
-                chart_card("mttr-graph", "mttr-granularity-select", "Median time to recovery", METRIC_INFO["mttr"]),
-                chart_card("cfr-graph", "cfr-granularity-select", "Change failure rate", METRIC_INFO["cfr"]),
-                html.Div("Throughput", className="grid-section-label"),
-                chart_card("deploy-graph", "deploy-granularity-select", "Deployment frequency", METRIC_INFO["deploy"]),
-                chart_card(
-                    "lead-time-graph",
-                    "lead-time-granularity-select",
-                    "Median lead time",
-                    METRIC_INFO["lead_time"],
-                    options=LEAD_TIME_GRANULARITY_OPTIONS,
-                    default="W",
-                ),
-            ],
-            className="chart-grid",
-        ),
-        html.Details([html.Summary("View data as table"), html.Div(id="data-table")], className="table-toggle"),
-    ],
-    className="app-root",
+            className="settings-field",
+        )
+        for field in ENV_FIELDS
+    ]
+    return html.Div(
+        [
+            html.Div(
+                [
+                    dcc.Link("← Back to dashboard", href="/", className="back-link"),
+                    html.H1("Settings", className="settings-title"),
+                    html.P(
+                        "Saves to .env in the project root, which fetch_data.sh loads automatically. "
+                        "Fill these in, save, then run ./fetch_data.sh to pull fresh data.",
+                        className="subtitle",
+                    ),
+                ]
+            ),
+            html.Div(fields, className="settings-form"),
+            html.Button("Save", id="settings-save", className="settings-save-btn"),
+            html.Div(id="settings-status", className="settings-status"),
+        ],
+        className="app-root",
+    )
+
+
+app.layout = html.Div([dcc.Location(id="url", refresh=False), html.Div(id="page-content")])
+
+
+@app.callback(Output("page-content", "children"), Input("url", "pathname"))
+def render_page(pathname):
+    if pathname == "/settings":
+        return settings_layout()
+    return dashboard_layout()
+
+
+@app.callback(
+    Output("settings-status", "children"),
+    Input("settings-save", "n_clicks"),
+    [State(f"env-{field['key']}", "value") for field in ENV_FIELDS],
+    prevent_initial_call=True,
 )
+def save_settings(_n_clicks, *values):
+    write_env_file({field["key"]: value for field, value in zip(ENV_FIELDS, values)})
+    return "Saved to .env. Run ./fetch_data.sh to fetch fresh data with these settings."
 
 
 @app.callback(
