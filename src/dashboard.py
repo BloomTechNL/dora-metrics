@@ -153,6 +153,7 @@ def bucket_label(ts: pd.Timestamp, freq: str) -> str:
 
 CSV_SCHEMAS = {
     "mttr.csv": {
+        "card_id": "object",
         "card_name": "object",
         "card_url": "object",
         "in_progress_at": "datetime64[ns]",

@@ -20,14 +20,26 @@ default) are also excluded and reported separately: a gap that short is
 usually a card being dragged straight through both lists at once (e.g. a
 Butler automation, or bulk cleanup) rather than real recovery time.
 
+Incremental: fetching a card's full updateCard:idList action history is the
+expensive part of this script (one request per card, rate-limited to ~9/s),
+so if data/mttr.csv already exists, a card is skipped entirely — no action
+history re-fetched — when it was already resolved (present in the CSV) on a
+previous run *and* is still currently sitting in the Done list. That second
+condition matters: an already-resolved card can be reopened and dragged back
+out of Done, and this re-checks it in that case rather than trusting a stale
+resolved timestamp forever. Every other card (new, or not currently in Done)
+gets its history fetched fresh, same as before. Newly-resolved cards are
+merged into the existing CSV by card id, not appended blindly.
+
 Usage:
     uv run src/trello_mttr.py [boardId] [--label=bug] [--done=Done] [--in-progress="In Progress"] [--min-duration-minutes=15]
 
 boardId defaults to the TRELLO_BOARD_ID env var if not passed positionally.
 
-Always writes the resolved (raw, per-card) dataset to data/mttr.csv — a
-gitignored local cache intended for a dashboard to recompute MTTR over
-arbitrary windows without re-hitting Trello.
+Always writes the merged resolved (raw, per-card) dataset to data/mttr.csv —
+a gitignored local cache intended for a dashboard to recompute MTTR over
+arbitrary windows without re-hitting Trello, and that this script itself
+reads on its next run to skip re-fetching already-resolved cards.
 
 Required env vars:
     TRELLO_API_KEY
@@ -36,6 +48,7 @@ Required env vars:
 """
 
 import argparse
+import csv
 import time
 from datetime import datetime
 
@@ -96,6 +109,28 @@ def format_hours(delta_seconds: float) -> str:
     return f"{delta_seconds / 3600:.2f}"
 
 
+def read_existing_resolved() -> dict[str, dict]:
+    if not MTTR_CSV_PATH.exists():
+        return {}
+    with MTTR_CSV_PATH.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if rows and "card_id" not in rows[0]:
+        # Pre-existing CSV from before card_id was tracked: can't be matched back to a
+        # card to skip re-fetching, so treat as if there's no cached data.
+        return {}
+    return {
+        row["card_id"]: {
+            "card_id": row["card_id"],
+            "card_name": row["card_name"],
+            "card_url": row["card_url"],
+            "started_at": parse_date(row["in_progress_at"]),
+            "done_at": parse_date(row["done_at"]),
+            "duration_seconds": float(row["duration_hours"]) * 3600,
+        }
+        for row in rows
+    }
+
+
 def main():
     opts = parse_args()
     board_id = opts["board_id"]
@@ -119,11 +154,25 @@ def main():
         raise SystemExit(f'Multiple labels named "{label_name}" found; this script can\'t disambiguate labels by name.')
     bug_label_id = bug_labels[0]["id"]
 
+    existing_resolved = read_existing_resolved()
+
     all_cards = trello_get(
         f"/boards/{board_id}/cards/open", {"fields": "id,name,idList,closed,shortUrl,labels"}, auth
     )
     bug_cards = [c for c in all_cards if any(l["id"] == bug_label_id for l in c["labels"])]
-    print(f'Found {len(bug_cards)} card(s) labeled "{label_name}" on board {board_id}. Fetching history...')
+
+    # A card already resolved on a previous run needs no re-fetch of its (expensive) action
+    # history, as long as it's still sitting in Done — if it got reopened and dragged back out,
+    # re-check it rather than trusting a stale resolved timestamp.
+    cards_to_check = [
+        c for c in bug_cards if not (c["id"] in existing_resolved and c["idList"] == done_list_id)
+    ]
+    skipped_count = len(bug_cards) - len(cards_to_check)
+    print(
+        f'Found {len(bug_cards)} card(s) labeled "{label_name}" on board {board_id}. '
+        f"{skipped_count} already resolved (skipping history fetch), fetching history for "
+        f"{len(cards_to_check)}..."
+    )
 
     resolved = []
     unresolved = []
@@ -131,7 +180,7 @@ def main():
     no_in_progress = []
     too_fast = []
 
-    for index, card in enumerate(bug_cards):
+    for index, card in enumerate(cards_to_check):
         actions = trello_get(
             f'/cards/{card["id"]}/actions',
             {"filter": "updateCard:idList", "limit": "1000", "fields": "type,date,data"},
@@ -169,25 +218,46 @@ def main():
             unresolved.append(card)
 
         if (index + 1) % 25 == 0:
-            print(f"  ...{index + 1}/{len(bug_cards)} processed")
+            print(f"  ...{index + 1}/{len(cards_to_check)} processed")
         time.sleep(0.11)  # stay comfortably under Trello's 100 req / 10s rate limit
+
+    newly_resolved_by_id = {
+        r["card"]["id"]: {
+            "card_id": r["card"]["id"],
+            "card_name": r["card"]["name"],
+            "card_url": r["card"]["shortUrl"],
+            "started_at": r["started_at"],
+            "done_at": r["done_at"],
+            "duration_seconds": r["duration_seconds"],
+        }
+        for r in resolved
+    }
+    all_resolved = {**existing_resolved, **newly_resolved_by_id}
+    resolved_all = sorted(all_resolved.values(), key=lambda r: r["duration_seconds"])
+
+    if existing_resolved:
+        print()
+        print(
+            f"Incremental fetch: skipped {skipped_count} already-resolved card(s) "
+            f"({len(newly_resolved_by_id)} newly resolved this run)."
+        )
 
     print()
     print(
         "Card                                                            In Progress          Reached Done         Hours"
     )
-    for r in sorted(resolved, key=lambda r: r["duration_seconds"]):
-        name = r["card"]["name"]
+    for r in resolved_all:
+        name = r["card_name"]
         name = name[:57] + "..." if len(name) > 60 else name.ljust(60)
         print(
             f'{name}  {r["started_at"].strftime("%Y-%m-%dT%H:%M")}  '
             f'{r["done_at"].strftime("%Y-%m-%dT%H:%M")}  {format_hours(r["duration_seconds"])}'
         )
 
-    if resolved:
-        durations = [r["duration_seconds"] for r in resolved]
+    if resolved_all:
+        durations = [r["duration_seconds"] for r in resolved_all]
         print()
-        print(f"Resolved bug cards: {len(resolved)}")
+        print(f"Resolved bug cards: {len(resolved_all)}")
         print(f"Median time to recovery: {format_hours(median(durations))} hours")
         print(
             f"(mean: {format_hours(mean(durations))} hours, min: {format_hours(min(durations))} hours, "
@@ -229,15 +299,20 @@ def main():
 
     rows = [
         [
-            r["card"]["name"],
-            r["card"]["shortUrl"],
+            r["card_id"],
+            r["card_name"],
+            r["card_url"],
             to_iso(r["started_at"]),
             to_iso(r["done_at"]),
             format_hours(r["duration_seconds"]),
         ]
-        for r in resolved
+        for r in sorted(resolved_all, key=lambda r: r["done_at"])
     ]
-    write_csv(MTTR_CSV_PATH, ["card_name", "card_url", "in_progress_at", "done_at", "duration_hours"], rows)
+    write_csv(
+        MTTR_CSV_PATH,
+        ["card_id", "card_name", "card_url", "in_progress_at", "done_at", "duration_hours"],
+        rows,
+    )
     print()
     print(f"Wrote raw data to {MTTR_CSV_PATH}")
 
