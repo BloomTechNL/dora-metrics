@@ -2,10 +2,13 @@
 """
 Compute DORA "Lead Time for Changes" from GitHub Actions run history,
 operationalized here as pipeline duration: the time from push (workflow
-run created_at) to pipeline completion (run updated_at) for the "Meedoen"
-workflow (.github/workflows/meedoen.yml) — the pipeline that builds,
-tests, and deploys the app. This roughly corresponds to time between push
-and deploy, given trunk-based CD. The "Proxy" workflow is ignored.
+run created_at) to pipeline completion (run updated_at) for the workflow
+at .github/workflows/<WORKFLOW_FILE> — the pipeline that builds, tests, and
+deploys the app. This roughly corresponds to time between push and deploy,
+given trunk-based CD. Other workflows in the repo (e.g. a "Proxy" workflow)
+are ignored. GitHub Actions always looks for workflow files at
+.github/workflows/ specifically — that part isn't configurable — so only
+the filename varies by project.
 
 Only successful runs are counted — a failed/cancelled run doesn't result
 in a deploy, so it isn't a push-to-deploy duration.
@@ -36,6 +39,8 @@ Required env vars:
     GITHUB_TOKEN
     GIT_REPO_PATH — local path to a git checkout whose "origin" remote
                     points at the GitHub repo to read Actions runs from
+    WORKFLOW_FILE — filename (not path) of the workflow under
+                    .github/workflows/ to measure, e.g. "meedoen.yml"
 """
 
 import re
@@ -49,7 +54,7 @@ import requests
 from lib_dora import DATA_DIR, mean, median, require_env, to_iso, write_csv
 
 GITHUB_API_BASE = "https://api.github.com"
-WORKFLOW_FILE = "meedoen.yml"
+WORKFLOWS_DIR = ".github/workflows"  # the only location GitHub Actions will look for workflow files; not configurable
 BRANCH = "main"
 CSV_PATH = DATA_DIR / "lead-time.csv"
 PAGE_CAP = 10  # GitHub silently stops paginating this endpoint after 1000 results (10 * 100/page)
@@ -87,13 +92,14 @@ def get_github_repo_slug(repo_path: str) -> tuple[str, str]:
     return match.group(1), match.group(2)
 
 
-def find_workflow(owner: str, repo: str, token: str) -> dict:
+def find_workflow(owner: str, repo: str, workflow_file: str, token: str) -> dict:
+    workflow_path = f"{WORKFLOWS_DIR}/{workflow_file}"
     data = github_get(f"/repos/{owner}/{repo}/actions/workflows", {}, token)
     workflows = data["workflows"]
-    workflow = next((w for w in workflows if w["path"] == f".github/workflows/{WORKFLOW_FILE}"), None)
+    workflow = next((w for w in workflows if w["path"] == workflow_path), None)
     if workflow is None:
         available = ", ".join(w["path"] for w in workflows)
-        raise SystemExit(f"No workflow found with path .github/workflows/{WORKFLOW_FILE}. Available: {available}")
+        raise SystemExit(f"No workflow found with path {workflow_path}. Available: {available}")
     return {"id": workflow["id"], "created_at": datetime.fromisoformat(workflow["created_at"].replace("Z", "+00:00"))}
 
 
@@ -149,7 +155,8 @@ def get_successful_runs(owner: str, repo: str, workflow_id: int, workflow_create
 def main():
     token = require_env("GITHUB_TOKEN")
     owner, repo = get_github_repo_slug(require_env("GIT_REPO_PATH"))
-    workflow = find_workflow(owner, repo, token)
+    workflow_file = require_env("WORKFLOW_FILE")
+    workflow = find_workflow(owner, repo, workflow_file, token)
     runs = get_successful_runs(owner, repo, workflow["id"], workflow["created_at"], token)
 
     if not runs:

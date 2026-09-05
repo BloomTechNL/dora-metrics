@@ -38,6 +38,7 @@ Required environment variables (the union of what the four scripts need):
 | `TRELLO_BOARD_ID` | Trello board id to read bug cards from | The segment after `/b/` in the board's URL, e.g. `trello.com/b/WEJ9CX5t/...` → `WEJ9CX5t` |
 | `GIT_REPO_PATH` | Local path to the git checkout to analyze; also used to derive the GitHub owner/repo (via its `origin` remote) for the lead-time fetch | — |
 | `GITHUB_TOKEN` | GitHub token with `actions:read` on the target repo | https://github.com/settings/tokens |
+| `WORKFLOW_FILE` | Filename (not path — GitHub Actions always looks in `.github/workflows/`, which isn't configurable) of the workflow to measure pipeline duration for | The `.yml`/`.yaml` file under `.github/workflows/` in the target repo whose runs correspond to a deploy, e.g. `meedoen.yml` |
 
 The easiest way to set these: copy `.env.example` to `.env` and fill in the
 values — `fetch_data.sh` loads `.env` automatically if it exists, and will
@@ -66,6 +67,6 @@ variables — it only reads the CSVs already in `data/`, so run
   `trello_mttr.py`; see its header comment).
 - `deploy_frequency.py` and `trello_cfr.py` assume trunk-based development on
   a `main` branch, where every commit is a deploy.
-- `lead_time.py` assumes a GitHub Actions workflow at
-  `.github/workflows/meedoen.yml` — this is specific to the `BS-F/meedoen`
-  repo's pipeline naming and would need updating for a different repo.
+- `lead_time.py` measures the workflow named by `WORKFLOW_FILE` (see above) —
+  this is specific to whatever repo `GIT_REPO_PATH` points at, so it needs to
+  match that repo's pipeline filename.
