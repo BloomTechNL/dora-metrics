@@ -61,6 +61,22 @@ LEAD_TIME_GRANULARITY_OPTIONS = [
     {"label": "Quarterly", "value": "QS"},
 ]
 
+METRIC_INFO = {
+    "mttr": (
+        'Median time from a "bug"-labelled Trello card first entering "In Progress" '
+        'to it last entering "Done".'
+    ),
+    "cfr": (
+        "Revert-like commits (subject starting with \"revert\") plus \"bug\"-labelled "
+        "Trello cards created, divided by total deploys (commits on main), for the period."
+    ),
+    "deploy": "Number of commits on main — each commit is treated as one deploy.",
+    "lead_time": (
+        "Median GitHub Actions pipeline duration — time from a workflow run starting "
+        "to it completing, across successful runs only."
+    ),
+}
+
 
 def bucket_label(ts: pd.Timestamp, freq: str) -> str:
     if freq == "QS":
@@ -165,21 +181,21 @@ def lead_time_summary(days, freq):
     return trend, overall, len(filtered)
 
 
-def apply_chart_theme(fig: go.Figure, title: str) -> None:
+def apply_chart_theme(fig: go.Figure, y_title: str) -> None:
     fig.update_layout(
-        title=dict(text=title, font=dict(color=COLORS["primary_ink"], size=16), x=0, xanchor="left"),
         plot_bgcolor=COLORS["surface"],
         paper_bgcolor=COLORS["surface"],
         font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", color=COLORS["secondary_ink"]),
         xaxis=dict(gridcolor=COLORS["grid"], linecolor=COLORS["baseline"], tickfont=dict(color=COLORS["muted"])),
         yaxis=dict(
+            title=dict(text=y_title, font=dict(color=COLORS["muted"], size=12)),
             gridcolor=COLORS["grid"],
             linecolor=COLORS["baseline"],
             tickfont=dict(color=COLORS["muted"]),
             rangemode="tozero",
         ),
         hovermode="x unified",
-        margin=dict(l=48, r=24, t=48, b=36),
+        margin=dict(l=56, r=24, t=16, b=36),
         height=280,
     )
 
@@ -190,7 +206,7 @@ def _no_data_figure() -> go.Figure:
     return fig
 
 
-def line_chart(series: pd.Series, freq: str, title: str, color: str, hover_suffix: str) -> go.Figure:
+def line_chart(series: pd.Series, freq: str, color: str, hover_suffix: str, y_title: str) -> go.Figure:
     if len(series) == 0:
         fig = _no_data_figure()
     else:
@@ -207,11 +223,11 @@ def line_chart(series: pd.Series, freq: str, title: str, color: str, hover_suffi
                 hovertemplate=f"%{{customdata}}<br>%{{y:.2f}}{hover_suffix}<extra></extra>",
             )
         )
-    apply_chart_theme(fig, title)
+    apply_chart_theme(fig, y_title)
     return fig
 
 
-def bar_chart(series: pd.Series, freq: str, title: str, color: str) -> go.Figure:
+def bar_chart(series: pd.Series, freq: str, color: str, y_title: str) -> go.Figure:
     if len(series) == 0:
         fig = _no_data_figure()
     else:
@@ -226,7 +242,7 @@ def bar_chart(series: pd.Series, freq: str, title: str, color: str) -> go.Figure
                 hovertemplate="%{customdata}<br>%{y} deploys<extra></extra>",
             )
         )
-    apply_chart_theme(fig, title)
+    apply_chart_theme(fig, y_title)
     return fig
 
 
@@ -264,17 +280,33 @@ def stat_tile(id_: str, label: str) -> html.Div:
     )
 
 
-def chart_card(graph_id: str, granularity_id: str, options=GRANULARITY_OPTIONS, default: str = "MS") -> html.Div:
+def chart_card(
+    graph_id: str,
+    granularity_id: str,
+    title: str,
+    info_text: str,
+    options=GRANULARITY_OPTIONS,
+    default: str = "MS",
+) -> html.Div:
     return html.Div(
         [
             html.Div(
-                html.Div(
-                    [
-                        html.Label("Granularity"),
-                        dcc.Dropdown(id=granularity_id, options=options, value=default, clearable=False),
-                    ],
-                    className="chart-control",
-                ),
+                [
+                    html.Div(
+                        [
+                            html.Span(title, className="chart-title"),
+                            html.Span("ⓘ", className="info-icon", title=info_text),
+                        ],
+                        className="chart-title-row",
+                    ),
+                    html.Div(
+                        [
+                            html.Label("Granularity"),
+                            dcc.Dropdown(id=granularity_id, options=options, value=default, clearable=False),
+                        ],
+                        className="chart-control",
+                    ),
+                ],
                 className="chart-header",
             ),
             dcc.Graph(id=graph_id, config={"displayModeBar": False}),
@@ -323,7 +355,15 @@ INDEX_STRING = f"""<!DOCTYPE html>
                 background: {COLORS["surface"]}; border: 1px solid {COLORS["border"]};
                 border-radius: 8px; padding: 8px 8px 0;
             }}
-            .chart-header {{ display: flex; justify-content: flex-end; padding: 8px 8px 0; }}
+            .chart-header {{
+                display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 0;
+            }}
+            .chart-title-row {{ display: flex; align-items: center; gap: 6px; }}
+            .chart-title {{ font-size: 15px; font-weight: 700; color: {COLORS["primary_ink"]}; }}
+            .info-icon {{
+                display: inline-flex; align-items: center; justify-content: center;
+                color: {COLORS["muted"]}; font-size: 13px; cursor: default;
+            }}
             .chart-control {{ display: flex; flex-direction: column; gap: 4px; width: 160px; }}
             .chart-control label {{
                 font-size: 11px; font-weight: 600; color: {COLORS["muted"]};
@@ -357,7 +397,7 @@ app.layout = html.Div(
             [
                 html.H1("DORA Metrics"),
                 html.P(
-                    "Mean time to recovery, change failure rate, deployment frequency, and "
+                    "Median time to recovery, change failure rate, deployment frequency, and "
                     "lead time for changes, from the Trello board, git history, and GitHub Actions.",
                     className="subtitle",
                 ),
@@ -385,15 +425,17 @@ app.layout = html.Div(
         html.Div(
             [
                 html.Div("Stability", className="grid-section-label"),
-                chart_card("mttr-graph", "mttr-granularity-select"),
-                chart_card("cfr-graph", "cfr-granularity-select"),
+                chart_card("mttr-graph", "mttr-granularity-select", "Median time to recovery", METRIC_INFO["mttr"]),
+                chart_card("cfr-graph", "cfr-granularity-select", "Change failure rate", METRIC_INFO["cfr"]),
                 html.Div("Velocity", className="grid-section-label"),
-                chart_card("deploy-graph", "deploy-granularity-select"),
+                chart_card("deploy-graph", "deploy-granularity-select", "Deployment frequency", METRIC_INFO["deploy"]),
                 chart_card(
                     "lead-time-graph",
                     "lead-time-granularity-select",
+                    "Median lead time",
+                    METRIC_INFO["lead_time"],
                     options=LEAD_TIME_GRANULARITY_OPTIONS,
-                    default="D",
+                    default="W",
                 ),
             ],
             className="chart-grid",
@@ -426,10 +468,10 @@ def update_dashboard(days, mttr_freq, cfr_freq, deploy_freq, lead_time_freq):
     deploy_trend, deploy_overall, _ = deploy_summary(days, deploy_freq)
     lead_time_trend, lead_time_overall, _ = lead_time_summary(days, lead_time_freq)
 
-    mttr_fig = line_chart(mttr_trend, mttr_freq, "Median time to recovery", COLORS["mttr"], " hours")
-    cfr_fig = line_chart(cfr_trend, cfr_freq, "Change failure rate", COLORS["cfr"], "%")
-    deploy_fig = bar_chart(deploy_trend, deploy_freq, "Deployment frequency", COLORS["deploy"])
-    lead_time_fig = line_chart(lead_time_trend, lead_time_freq, "Median lead time", COLORS["lead_time"], " min")
+    mttr_fig = line_chart(mttr_trend, mttr_freq, COLORS["mttr"], " hours", "Hours")
+    cfr_fig = line_chart(cfr_trend, cfr_freq, COLORS["cfr"], "%", "% of deploys")
+    deploy_fig = bar_chart(deploy_trend, deploy_freq, COLORS["deploy"], "Deploys")
+    lead_time_fig = line_chart(lead_time_trend, lead_time_freq, COLORS["lead_time"], " min", "Minutes")
 
     mttr_text = f"{mttr_overall:.1f} hours" if pd.notna(mttr_overall) else "No data"
     cfr_text = f"{cfr_overall:.2f}%" if cfr_overall is not None else "No data"
