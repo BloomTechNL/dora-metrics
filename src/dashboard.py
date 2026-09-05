@@ -4,28 +4,35 @@ Rate, Deployment Frequency, and Lead Time for Changes — computed from the
 CSVs that trello_mttr.py / trello_cfr.py / deploy_frequency.py /
 lead_time.py write to ./data/.
 
-This dashboard does not talk to Trello, git, or GitHub itself: it reads the
-raw, per-item data those scripts already cached (card timestamps, commit
-timestamps, pipeline run timestamps) and does all windowing/aggregation
-locally, so picking a different time range or granularity is instant instead
-of re-fetching from a rate-limited API.
+Normally this dashboard does not talk to Trello, git, or GitHub itself: it
+reads the raw, per-item data those scripts already cached (card timestamps,
+commit timestamps, pipeline run timestamps) and does all windowing/
+aggregation locally, so picking a different time range or granularity is
+instant instead of re-fetching from a rate-limited API. The one exception is
+the "Fetch latest data" button, which runs collect.py (the same four scripts
+fetch_data.sh runs) in a subprocess and reloads the CSVs afterwards.
 
 Run:
     ./serve_dashboard.sh
 
 Requires data/mttr.csv, data/cfr-commits.csv, data/cfr-bug-cards.csv,
 data/deploy-frequency.csv, and data/lead-time.csv to already exist —
-produced by running ./fetch_data.sh from the repo root.
+produced by running ./fetch_data.sh from the repo root, or by clicking
+"Fetch latest data" in the dashboard itself.
 """
 
+import os
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, State, dash_table, dcc, html
+from dash import Dash, Input, Output, State, ctx, dash_table, dcc, html
 
 ROOT_DIR = Path(__file__).parent.parent
+SRC_DIR = Path(__file__).parent
 DATA_DIR = ROOT_DIR / "data"
 ENV_PATH = ROOT_DIR / ".env"
 
@@ -193,6 +200,22 @@ def load_data():
 
 
 MTTR_DF, COMMITS_DF, BUG_CARDS_DF, DEPLOYS_DF, LEAD_TIME_DF = load_data()
+
+
+def run_fetch() -> tuple[bool, str]:
+    """Runs collect.py (the same thing fetch_data.sh runs) in a subprocess, using
+    .env values on top of the current environment so this works even when the
+    dashboard process itself wasn't started with those variables exported."""
+    env = {**os.environ, **{k: v for k, v in read_env_file().items() if v}}
+    result = subprocess.run(
+        [sys.executable, str(SRC_DIR / "collect.py")],
+        cwd=ROOT_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    output = (result.stdout + result.stderr).strip()
+    return result.returncode == 0, output
 
 
 def clip_to_range(df: pd.DataFrame, date_col: str, days) -> pd.DataFrame:
@@ -405,8 +428,16 @@ INDEX_STRING = f"""<!DOCTYPE html>
             .app-root {{ max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; }}
             .header h1 {{ margin: 0 0 4px; font-size: 24px; color: {COLORS["primary_ink"]}; }}
             .subtitle {{ margin: 0 0 28px; color: {COLORS["secondary_ink"]}; font-size: 14px; }}
-            .controls {{ display: flex; gap: 24px; margin-bottom: 24px; }}
+            .controls {{ display: flex; gap: 24px; align-items: flex-end; margin-bottom: 24px; }}
             .control {{ display: flex; flex-direction: column; gap: 4px; min-width: 200px; }}
+            .fetch-control {{ min-width: 0; flex-direction: row; align-items: center; gap: 12px; }}
+            .fetch-btn {{
+                padding: 8px 16px; font-size: 13px; font-weight: 600;
+                color: {COLORS["page"]}; background: {COLORS["primary_ink"]}; border: none; border-radius: 6px;
+                cursor: pointer;
+            }}
+            .fetch-btn:hover {{ opacity: 0.85; }}
+            .fetch-status {{ font-size: 12px; color: {COLORS["muted"]}; max-width: 420px; }}
             .control label {{
                 font-size: 12px; font-weight: 600; color: {COLORS["muted"]};
                 text-transform: uppercase; letter-spacing: 0.02em;
@@ -521,41 +552,63 @@ def dashboard_layout() -> html.Div:
                         ],
                         className="control",
                     ),
+                    html.Div(
+                        [
+                            html.Button("Fetch latest data", id="fetch-button", className="fetch-btn"),
+                            html.Div(id="fetch-status", className="fetch-status"),
+                        ],
+                        className="control fetch-control",
+                    ),
                 ],
                 className="controls",
             ),
-            html.Div(
+            dcc.Loading(
                 [
-                    stat_tile("mttr-stat", "Median time to recovery"),
-                    stat_tile("cfr-stat", "Change failure rate"),
-                    stat_tile("deploy-stat", "Deployment frequency"),
-                    stat_tile("lead-time-stat", "Median lead time"),
+                    html.Div(
+                        [
+                            stat_tile("mttr-stat", "Median time to recovery"),
+                            stat_tile("cfr-stat", "Change failure rate"),
+                            stat_tile("deploy-stat", "Deployment frequency"),
+                            stat_tile("lead-time-stat", "Median lead time"),
+                        ],
+                        className="stats",
+                    ),
+                    html.Div(
+                        [
+                            html.Div("Stability", className="grid-section-label"),
+                            chart_card(
+                                "mttr-graph",
+                                "mttr-granularity-select",
+                                "Median time to recovery",
+                                METRIC_INFO["mttr"],
+                            ),
+                            chart_card(
+                                "cfr-graph", "cfr-granularity-select", "Change failure rate", METRIC_INFO["cfr"]
+                            ),
+                            html.Div("Throughput", className="grid-section-label"),
+                            chart_card(
+                                "deploy-graph",
+                                "deploy-granularity-select",
+                                "Deployment frequency",
+                                METRIC_INFO["deploy"],
+                            ),
+                            chart_card(
+                                "lead-time-graph",
+                                "lead-time-granularity-select",
+                                "Median lead time",
+                                METRIC_INFO["lead_time"],
+                                options=LEAD_TIME_GRANULARITY_OPTIONS,
+                                default="W",
+                            ),
+                        ],
+                        className="chart-grid",
+                    ),
+                    html.Details(
+                        [html.Summary("View data as table"), html.Div(id="data-table")], className="table-toggle"
+                    ),
                 ],
-                className="stats",
+                type="circle",
             ),
-            html.Div(
-                [
-                    html.Div("Stability", className="grid-section-label"),
-                    chart_card(
-                        "mttr-graph", "mttr-granularity-select", "Median time to recovery", METRIC_INFO["mttr"]
-                    ),
-                    chart_card("cfr-graph", "cfr-granularity-select", "Change failure rate", METRIC_INFO["cfr"]),
-                    html.Div("Throughput", className="grid-section-label"),
-                    chart_card(
-                        "deploy-graph", "deploy-granularity-select", "Deployment frequency", METRIC_INFO["deploy"]
-                    ),
-                    chart_card(
-                        "lead-time-graph",
-                        "lead-time-granularity-select",
-                        "Median lead time",
-                        METRIC_INFO["lead_time"],
-                        options=LEAD_TIME_GRANULARITY_OPTIONS,
-                        default="W",
-                    ),
-                ],
-                className="chart-grid",
-            ),
-            html.Details([html.Summary("View data as table"), html.Div(id="data-table")], className="table-toggle"),
         ],
         className="app-root",
     )
@@ -632,13 +685,23 @@ def save_settings(_n_clicks, *values):
     Output("deploy-stat", "children"),
     Output("lead-time-stat", "children"),
     Output("data-table", "children"),
+    Output("fetch-status", "children"),
     Input("range-select", "value"),
     Input("mttr-granularity-select", "value"),
     Input("cfr-granularity-select", "value"),
     Input("deploy-granularity-select", "value"),
     Input("lead-time-granularity-select", "value"),
+    Input("fetch-button", "n_clicks"),
 )
-def update_dashboard(days, mttr_freq, cfr_freq, deploy_freq, lead_time_freq):
+def update_dashboard(days, mttr_freq, cfr_freq, deploy_freq, lead_time_freq, _fetch_clicks):
+    global MTTR_DF, COMMITS_DF, BUG_CARDS_DF, DEPLOYS_DF, LEAD_TIME_DF
+
+    fetch_status = ""
+    if ctx.triggered_id == "fetch-button":
+        ok, output = run_fetch()
+        MTTR_DF, COMMITS_DF, BUG_CARDS_DF, DEPLOYS_DF, LEAD_TIME_DF = load_data()
+        fetch_status = "Fetched latest data." if ok else f"Fetch failed: {output[-300:] or 'see terminal output'}"
+
     mttr_trend, mttr_overall, _ = mttr_summary(days, mttr_freq)
     cfr_trend, cfr_overall, _ = cfr_summary(days, cfr_freq)
     deploy_trend, deploy_overall, _ = deploy_summary(days, deploy_freq)
@@ -673,6 +736,7 @@ def update_dashboard(days, mttr_freq, cfr_freq, deploy_freq, lead_time_freq):
         deploy_text,
         lead_time_text,
         table,
+        fetch_status,
     )
 
 
