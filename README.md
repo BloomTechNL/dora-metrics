@@ -31,15 +31,19 @@ sequence, writing their output to `data/*.csv`. Takes no arguments.
 
 Required environment variables (the union of what the four scripts need):
 
-| Variable | Description |
-|---|---|
-| `TRELLO_API_KEY` | Trello API key |
-| `TRELLO_TOKEN` | Trello API token |
-| `TRELLO_BOARD_ID` | Trello board id to read bug cards from |
-| `GIT_REPO_PATH` | Local path to the git checkout to analyze; also used to derive the GitHub owner/repo (via its `origin` remote) for the lead-time fetch |
-| `GITHUB_TOKEN` | GitHub token with `actions:read` on the target repo |
+| Variable | Description | Where to get it |
+|---|---|---|
+| `TRELLO_API_KEY` | Trello API key | https://trello.com/app-key |
+| `TRELLO_TOKEN` | Trello API token | Click the "Token" link on https://trello.com/app-key and authorize |
+| `TRELLO_BOARD_ID` | Trello board id to read bug cards from | The segment after `/b/` in the board's URL, e.g. `trello.com/b/WEJ9CX5t/...` → `WEJ9CX5t` |
+| `GIT_REPO_PATH` | Local path to the git checkout to analyze; also used to derive the GitHub owner/repo (via its `origin` remote) for the lead-time fetch | — |
+| `GITHUB_TOKEN` | GitHub token with `actions:read` on the target repo | https://github.com/settings/tokens |
 
-Put these in your shell profile or a `.env` file (both are gitignored).
+The easiest way to set these: copy `.env.example` to `.env` and fill in the
+values — `fetch_data.sh` loads `.env` automatically if it exists, and will
+tell you exactly which variable(s) are still missing (with the hints above)
+if you forget one. You can also set them in your shell profile instead;
+either way, `.env` is gitignored so it's safe to put real credentials in it.
 
 Each underlying script can also be run individually — e.g. `uv run
 src/trello_mttr.py` — if you only need to refresh one metric; see its header

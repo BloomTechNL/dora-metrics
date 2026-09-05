@@ -427,7 +427,7 @@ app.layout = html.Div(
                 html.Div("Stability", className="grid-section-label"),
                 chart_card("mttr-graph", "mttr-granularity-select", "Median time to recovery", METRIC_INFO["mttr"]),
                 chart_card("cfr-graph", "cfr-granularity-select", "Change failure rate", METRIC_INFO["cfr"]),
-                html.Div("Velocity", className="grid-section-label"),
+                html.Div("Throughput", className="grid-section-label"),
                 chart_card("deploy-graph", "deploy-granularity-select", "Deployment frequency", METRIC_INFO["deploy"]),
                 chart_card(
                     "lead-time-graph",
