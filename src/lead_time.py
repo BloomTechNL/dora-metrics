@@ -19,14 +19,26 @@ fetching runs one at a time. That endpoint silently caps pagination at
 1000 results per query — page 11 comes back empty even when more data
 exists — so this recursively splits the created-date range in half
 whenever a range's page count saturates the cap, until every leaf range
-fits under it. At current volume (~3,300 successful runs) that's under 50
-requests total across a handful of ranges, comfortably inside GitHub's
-5,000 req/hour authenticated rate limit — no sampling or throttling
-needed.
+fits under it.
 
-Always writes the raw per-run dataset to data/lead-time.csv — a gitignored
-local cache the dashboard reads to recompute duration-per-period over
-arbitrary windows without re-hitting the GitHub API.
+Incremental: if data/lead-time.csv already exists, only runs created since
+(the newest run_id's created_at already on disk, minus a 24-hour lookback)
+are fetched, instead of re-walking the entire history every time — at
+current volume (~3,300 successful runs) a full fetch is ~50 requests across
+a handful of ranges and takes over a minute, whereas a normal incremental
+run only has to look at the last day or two. The 24-hour lookback exists
+because a run can still be queued/in-progress (and thus invisible to the
+status=success filter) at the moment of a previous fetch; re-checking that
+window on every run catches it once it finishes, instead of losing it
+forever. Newly-fetched rows are merged into the existing CSV by run id
+(overwriting a stale row if a run was somehow re-run), not appended
+blindly. If data/lead-time.csv doesn't exist yet, this falls back to a full
+fetch from the workflow's creation date, same as before.
+
+Always writes the merged per-run dataset to data/lead-time.csv — a
+gitignored local cache the dashboard reads to recompute duration-per-period
+over arbitrary windows without re-hitting the GitHub API, and that this
+script itself reads on its next run to fetch only what's new.
 
 The GitHub owner/repo is derived from the `origin` remote of the git
 checkout at GIT_REPO_PATH, rather than hardcoded — this script targets
@@ -43,6 +55,7 @@ Required env vars:
                     .github/workflows/ to measure, e.g. "meedoen.yml"
 """
 
+import csv
 import re
 import subprocess
 import time
@@ -58,6 +71,7 @@ WORKFLOWS_DIR = ".github/workflows"  # the only location GitHub Actions will loo
 BRANCH = "main"
 CSV_PATH = DATA_DIR / "lead-time.csv"
 PAGE_CAP = 10  # GitHub silently stops paginating this endpoint after 1000 results (10 * 100/page)
+LOOKBACK_HOURS = 24  # re-check this recent a window every run, to catch runs that were still in-progress last time
 
 
 TRANSIENT_RETRIES = 3
@@ -132,8 +146,10 @@ def fetch_runs_in_range(
         return left_future.result() + right_future.result()
 
 
-def get_successful_runs(owner: str, repo: str, workflow_id: int, workflow_created_at: datetime, token: str) -> list[dict]:
-    raw_runs = fetch_runs_in_range(workflow_created_at, datetime.now(timezone.utc), owner, repo, workflow_id, token)
+def get_successful_runs(
+    owner: str, repo: str, workflow_id: int, since: datetime, until: datetime, token: str
+) -> list[dict]:
+    raw_runs = fetch_runs_in_range(since, until, owner, repo, workflow_id, token)
 
     by_id = {run["id"]: run for run in raw_runs}
 
@@ -152,12 +168,46 @@ def get_successful_runs(owner: str, repo: str, workflow_id: int, workflow_create
     return runs
 
 
+def read_existing_runs() -> dict[int, dict]:
+    if not CSV_PATH.exists():
+        return {}
+    with CSV_PATH.open(newline="", encoding="utf-8") as f:
+        return {
+            int(row["run_id"]): {
+                "id": int(row["run_id"]),
+                "created_at": datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")),
+                "completed_at": datetime.fromisoformat(row["completed_at"].replace("Z", "+00:00")),
+                "duration_minutes": float(row["duration_minutes"]),
+            }
+            for row in csv.DictReader(f)
+        }
+
+
 def main():
     token = require_env("GITHUB_TOKEN")
     owner, repo = get_github_repo_slug(require_env("GIT_REPO_PATH"))
     workflow_file = require_env("WORKFLOW_FILE")
     workflow = find_workflow(owner, repo, workflow_file, token)
-    runs = get_successful_runs(owner, repo, workflow["id"], workflow["created_at"], token)
+
+    existing_runs = read_existing_runs()
+    if existing_runs:
+        newest_known = max(r["created_at"] for r in existing_runs.values())
+        since = max(newest_known - timedelta(hours=LOOKBACK_HOURS), workflow["created_at"])
+    else:
+        since = workflow["created_at"]
+    until = datetime.now(timezone.utc)
+
+    fetched = get_successful_runs(owner, repo, workflow["id"], since, until, token)
+
+    if existing_runs:
+        new_count = len({r["id"] for r in fetched} - existing_runs.keys())
+        print(
+            f"Incremental fetch: checked runs created since {since.isoformat()} "
+            f"({len(fetched)} found, {new_count} new)."
+        )
+
+    merged = {**existing_runs, **{r["id"]: r for r in fetched}}
+    runs = sorted(merged.values(), key=lambda r: r["created_at"])
 
     if not runs:
         print("No successful pipeline runs found.")

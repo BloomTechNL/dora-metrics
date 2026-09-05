@@ -76,3 +76,14 @@ with the new settings.
 - `lead_time.py` measures the workflow named by `WORKFLOW_FILE` (see above) —
   this is specific to whatever repo `GIT_REPO_PATH` points at, so it needs to
   match that repo's pipeline filename.
+- `lead_time.py` is incremental: if `data/lead-time.csv` already exists, it
+  only fetches runs created since (the newest run already on disk, minus a
+  24-hour lookback) instead of re-walking the full history every time — a
+  normal run takes a couple of seconds instead of a minute or more. The
+  24-hour lookback re-checks runs that could've still been in-progress (and
+  thus invisible to the success filter) at the time of the previous fetch.
+  Delete `data/lead-time.csv` to force a full re-fetch from scratch. The
+  other three scripts (`trello_mttr.py`, `trello_cfr.py`,
+  `deploy_frequency.py`) still always fetch in full — their sources (a
+  local git checkout, and Trello's bulk "all open cards" endpoint) are cheap
+  enough that incremental fetching wouldn't meaningfully speed them up.
