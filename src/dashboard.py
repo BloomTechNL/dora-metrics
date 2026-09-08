@@ -74,7 +74,7 @@ LEAD_TIME_GRANULARITY_OPTIONS = [
 METRIC_INFO = {
     "mttr": (
         'Median time from a "bug"-labelled Trello card first entering "In Progress" '
-        'to it last entering "Done".'
+        'to it last entering "Done", excluding weekends.'
     ),
     "cfr": (
         "Revert-like commits (subject starting with \"revert\") plus \"bug\"-labelled "

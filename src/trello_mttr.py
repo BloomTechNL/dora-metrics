@@ -6,11 +6,12 @@ are typically right-skewed by a handful of slow outliers) with mean/min/max
 shown alongside for reference.
 
 MTTR per card = (last time the card entered "Done") - (first time it ever
-entered "In Progress"). Both timestamps come from walking the card's
-updateCard:idList action history: "first entered In Progress" is the
-earliest move whose listAfter is the In Progress list (counting every
-stall/restart, not just the final push), and "last entered Done" is the
-most recent move whose listAfter is the Done list.
+entered "In Progress"), excluding any time that falls on a Saturday or
+Sunday. Both timestamps come from walking the card's updateCard:idList
+action history: "first entered In Progress" is the earliest move whose
+listAfter is the In Progress list (counting every stall/restart, not just
+the final push), and "last entered Done" is the most recent move whose
+listAfter is the Done list.
 
 Only non-archived (open) cards are considered. Cards carrying the target
 label that never reached Done, or that reached Done but were never recorded
@@ -50,7 +51,7 @@ Required env vars:
 import argparse
 import csv
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -107,6 +108,22 @@ def parse_date(value: str) -> datetime:
 
 def format_hours(delta_seconds: float) -> str:
     return f"{delta_seconds / 3600:.2f}"
+
+
+def business_seconds_between(start: datetime, end: datetime) -> float:
+    """Seconds elapsed between two datetimes, excluding any time that falls on a
+    Saturday or Sunday (weekday() 5 or 6)."""
+    if end <= start:
+        return 0.0
+    total = 0.0
+    cursor = start
+    while cursor < end:
+        next_midnight = datetime.combine(cursor.date() + timedelta(days=1), datetime.min.time(), tzinfo=cursor.tzinfo)
+        chunk_end = min(next_midnight, end)
+        if cursor.weekday() < 5:  # Monday=0 ... Sunday=6
+            total += (chunk_end - cursor).total_seconds()
+        cursor = chunk_end
+    return total
 
 
 def read_existing_resolved() -> dict[str, dict]:
@@ -198,7 +215,7 @@ def main():
             done_at = max(done_entries)
             if in_progress_entries:
                 started_at = min(in_progress_entries)
-                duration_seconds = (done_at - started_at).total_seconds()
+                duration_seconds = business_seconds_between(started_at, done_at)
                 entry = {"card": card, "started_at": started_at, "done_at": done_at, "duration_seconds": duration_seconds}
                 if duration_seconds < min_duration_seconds:
                     # In Progress -> Done happened almost instantly; likely a card dragged
