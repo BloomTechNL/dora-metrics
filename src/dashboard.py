@@ -9,16 +9,17 @@ reads the raw, per-item data those scripts already cached (card timestamps,
 commit timestamps, pipeline run timestamps) and does all windowing/
 aggregation locally, so picking a different time range or granularity is
 instant instead of re-fetching from a rate-limited API. The one exception is
-the "Fetch latest data" button, which runs collect.py (the same four scripts
-fetch_data.sh runs) in a subprocess and reloads the CSVs afterwards.
+the "Fetch latest data" button, which runs collect.py (the same four
+scripts run by `uv run src/collect.py`) in a subprocess and reloads the CSVs
+afterwards.
 
 Run:
     ./serve_dashboard.sh
 
 Requires data/mttr.csv, data/cfr-commits.csv, data/cfr-bug-cards.csv,
 data/deploy-frequency.csv, and data/lead-time.csv to already exist —
-produced by running ./fetch_data.sh from the repo root, or by clicking
-"Fetch latest data" in the dashboard itself.
+produced by clicking "Fetch latest data" in the dashboard itself, or by
+running `uv run src/collect.py` from the repo root.
 """
 
 import os
@@ -87,7 +88,7 @@ METRIC_INFO = {
     ),
 }
 
-# Same six variables fetch_data.sh requires — see README.md / .env.example.
+# Same six variables collect.py requires — see README.md / .env.example.
 ENV_FIELDS = [
     {
         "key": "TRELLO_API_KEY",
@@ -203,9 +204,9 @@ MTTR_DF, COMMITS_DF, BUG_CARDS_DF, DEPLOYS_DF, LEAD_TIME_DF = load_data()
 
 
 def run_fetch() -> tuple[bool, str]:
-    """Runs collect.py (the same thing fetch_data.sh runs) in a subprocess, using
-    .env values on top of the current environment so this works even when the
-    dashboard process itself wasn't started with those variables exported."""
+    """Runs collect.py in a subprocess, using .env values on top of the current
+    environment so this works even when the dashboard process itself wasn't
+    started with those variables exported."""
     env = {**os.environ, **{k: v for k, v in read_env_file().items() if v}}
     result = subprocess.run(
         [sys.executable, str(SRC_DIR / "collect.py")],
@@ -640,8 +641,8 @@ def settings_layout() -> html.Div:
                     dcc.Link("← Back to dashboard", href="/", className="back-link"),
                     html.H1("Settings", className="settings-title"),
                     html.P(
-                        "Saves to .env in the project root, which fetch_data.sh loads automatically. "
-                        "Fill these in, save, then run ./fetch_data.sh to pull fresh data.",
+                        "Saves to .env in the project root. Fill these in, save, then click "
+                        '"Fetch latest data" on the dashboard to pull fresh data.',
                         className="subtitle",
                     ),
                 ]
@@ -672,7 +673,7 @@ def render_page(pathname):
 )
 def save_settings(_n_clicks, *values):
     write_env_file({field["key"]: value for field, value in zip(ENV_FIELDS, values)})
-    return "Saved to .env. Run ./fetch_data.sh to fetch fresh data with these settings."
+    return 'Saved to .env. Click "Fetch latest data" on the dashboard to fetch fresh data with these settings.'
 
 
 @app.callback(

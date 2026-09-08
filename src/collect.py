@@ -5,7 +5,7 @@ CSVs to ./data/. Equivalent to running trello_mttr.py, trello_cfr.py,
 deploy_frequency.py, and lead_time.py individually.
 
 Usage:
-    ./fetch_data.sh
+    uv run src/collect.py
 """
 
 import runpy
